@@ -13,15 +13,14 @@ app.use(fileUpload({
     abortOnLimit: true
 }));
 
-// Your ESQL to XSD conversion function
+// ESQL to XSD conversion function
 function convertESQLToXSD(esqlCode, originalFileName = 'converted_file.esql') {
     if (!esqlCode || esqlCode.trim() === '') {
         throw new Error('ESQL content is empty');
     }
     
-    const lines = esqlCode.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-    
-    let xsdContent = `<?xml version="1.0" encoding="UTF-8"?>
+    // Basic XSD template
+    const xsdContent = `<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
            targetNamespace="http://esql.conversion.schema"
            xmlns:tns="http://esql.conversion.schema"
@@ -77,6 +76,28 @@ function convertESQLToXSD(esqlCode, originalFileName = 'converted_file.esql') {
         <xs:sequence>
             <xs:element name="ProcessingResult" type="xs:string" minOccurs="0"/>
             <xs:element name="ProcessedElements" type="xs:integer" minOccurs="0"/>
+            <xs:element name="CustomerInfo" type="tns:CustomerInfoType" minOccurs="0"/>
+            <xs:element name="OrderDetails" type="tns:OrderDetailsType" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+    
+    <!-- Customer info type -->
+    <xs:complexType name="CustomerInfoType">
+        <xs:sequence>
+            <xs:element name="ID" type="xs:string" minOccurs="0"/>
+            <xs:element name="Name" type="xs:string" minOccurs="0"/>
+            <xs:element name="Email" type="xs:string" minOccurs="0"/>
+            <xs:element name="Phone" type="xs:string" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+    
+    <!-- Order details type -->
+    <xs:complexType name="OrderDetailsType">
+        <xs:sequence>
+            <xs:element name="OrderNumber" type="xs:string" minOccurs="0"/>
+            <xs:element name="OrderDate" type="xs:date" minOccurs="0"/>
+            <xs:element name="TotalAmount" type="xs:decimal" minOccurs="0"/>
+            <xs:element name="Status" type="xs:string" minOccurs="0"/>
         </xs:sequence>
     </xs:complexType>
 
@@ -92,11 +113,11 @@ app.post('/api/convert', (req, res) => {
         let fileName = 'unknown.esql';
         
         if (req.files && req.files.file) {
-            // File upload using express-fileupload
+            // File upload
             esqlContent = req.files.file.data.toString('utf8');
             fileName = req.files.file.name;
         } else if (req.body) {
-            // Raw text/JSON in body
+            // JSON or text body
             esqlContent = typeof req.body === 'string' ? req.body : req.body.content || req.body.esqlContent;
             fileName = req.body.filename || 'input.esql';
         }
@@ -115,4 +136,67 @@ app.post('/api/convert', (req, res) => {
             xsdContent: xsdContent,
             esqlContentLength: esqlContent.length,
             xsdContentLength: xsdContent.length,
-            conversionDate: new Date().toISOString
+            conversionDate: new Date().toISOString(),
+            conversionType: 'ESQL_TO_XSD'
+        });
+        
+    } catch (error) {
+        res.status(400).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+    res.json({ 
+        status: 'OK', 
+        service: 'ESQL to XSD Converter API',
+        version: '1.0.0',
+        nodeVersion: process.version,
+        uptime: process.uptime()
+    });
+});
+
+// Root endpoint with documentation
+app.get('/', (req, res) => {
+    res.json({
+        service: 'ESQL to XSD Conversion API',
+        version: '1.0.0',
+        description: 'Convert ESQL files to XSD schema format',
+        endpoints: {
+            'GET /': 'API documentation',
+            'GET /api/health': 'Health check',
+            'POST /api/convert': 'Convert ESQL to XSD'
+        },
+        usage: {
+            file_upload: 'Send multipart/form-data with "file" field',
+            json_request: 'Send JSON with "content" field',
+            text_request: 'Send plain text ESQL content'
+        },
+        examples: {
+            curl_file: 'curl -X POST -F "file=@sample.esql" https://your-api-url/api/convert',
+            curl_json: 'curl -X POST -H "Content-Type: application/json" -d \'{"content": "ESQL code here"}\' https://your-api-url/api/convert'
+        }
+    });
+});
+
+// Error handling middleware
+app.use((error, req, res, next) => {
+    console.error('Error:', error);
+    res.status(500).json({
+        success: false,
+        error: 'Internal server error'
+    });
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 ESQL to XSD Converter API running on port ${PORT}`);
+    console.log(`📖 API Documentation: http://localhost:${PORT}/`);
+    console.log(`❤️  Health Check: http://localhost:${PORT}/api/health`);
+});
+
+module.exports = app;
