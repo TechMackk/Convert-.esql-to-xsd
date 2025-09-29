@@ -1,21 +1,20 @@
 const express = require('express');
-const multer = require('multer');
+const fileUpload = require('express-fileupload');
+const cors = require('cors');
+
 const app = express();
 
-// Configure multer for file uploads
-const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
-});
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.text({ limit: '10mb' }));
+app.use(fileUpload({
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+    abortOnLimit: true
+}));
 
-app.use(express.json());
-app.use(express.text());
-
-// Your ESQL to XSD conversion function (from your n8n code)
+// Your ESQL to XSD conversion function
 function convertESQLToXSD(esqlCode, originalFileName = 'converted_file.esql') {
-    // Insert your complete conversion logic here from the Code node
-    // (The same function we created earlier)
-    
     if (!esqlCode || esqlCode.trim() === '') {
         throw new Error('ESQL content is empty');
     }
@@ -26,33 +25,84 @@ function convertESQLToXSD(esqlCode, originalFileName = 'converted_file.esql') {
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
            targetNamespace="http://esql.conversion.schema"
            xmlns:tns="http://esql.conversion.schema"
-           elementFormDefault="qualified">
+           elementFormDefault="qualified"
+           attributeFormDefault="unqualified">
     
     <!-- Generated from ESQL file: ${originalFileName} -->
     <!-- Generated on: ${new Date().toISOString()} -->
     
+    <!-- Root element definition -->
     <xs:element name="TransformedMessage" type="tns:TransformedMessageType"/>
-    <!-- Add the rest of your XSD generation logic -->
     
+    <!-- Main complex type for transformed message -->
+    <xs:complexType name="TransformedMessageType">
+        <xs:sequence>
+            <xs:element name="Header" type="tns:HeaderType" minOccurs="0"/>
+            <xs:element name="Body" type="tns:BodyType" minOccurs="0"/>
+            <xs:element name="ProcessingInfo" type="tns:ProcessingInfoType" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+    
+    <!-- Header type definition -->
+    <xs:complexType name="HeaderType">
+        <xs:sequence>
+            <xs:element name="MessageID" type="xs:string" minOccurs="0"/>
+            <xs:element name="Timestamp" type="xs:dateTime" minOccurs="0"/>
+            <xs:element name="Source" type="xs:string" minOccurs="0"/>
+            <xs:element name="Destination" type="xs:string" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+    
+    <!-- Processing info type -->
+    <xs:complexType name="ProcessingInfoType">
+        <xs:sequence>
+            <xs:element name="Timestamp" type="xs:dateTime" minOccurs="0"/>
+            <xs:element name="ProcessedBy" type="xs:string" minOccurs="0"/>
+            <xs:element name="Status" type="tns:ProcessingStatusType" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+    
+    <!-- Processing status enumeration -->
+    <xs:simpleType name="ProcessingStatusType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="SUCCESS"/>
+            <xs:enumeration value="PROCESSING"/>
+            <xs:enumeration value="ERROR"/>
+            <xs:enumeration value="COMPLETED"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- Body type definition -->
+    <xs:complexType name="BodyType">
+        <xs:sequence>
+            <xs:element name="ProcessingResult" type="xs:string" minOccurs="0"/>
+            <xs:element name="ProcessedElements" type="xs:integer" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+
 </xs:schema>`;
 
     return xsdContent;
 }
 
 // API Routes
-app.post('/api/convert', upload.single('file'), (req, res) => {
+app.post('/api/convert', (req, res) => {
     try {
         let esqlContent = '';
         let fileName = 'unknown.esql';
         
-        if (req.file) {
-            // File upload
-            esqlContent = req.file.buffer.toString('utf8');
-            fileName = req.file.originalname;
+        if (req.files && req.files.file) {
+            // File upload using express-fileupload
+            esqlContent = req.files.file.data.toString('utf8');
+            fileName = req.files.file.name;
         } else if (req.body) {
-            // Raw text in body
-            esqlContent = typeof req.body === 'string' ? req.body : req.body.content;
+            // Raw text/JSON in body
+            esqlContent = typeof req.body === 'string' ? req.body : req.body.content || req.body.esqlContent;
             fileName = req.body.filename || 'input.esql';
+        }
+        
+        if (!esqlContent) {
+            throw new Error('No ESQL content provided');
         }
         
         const xsdContent = convertESQLToXSD(esqlContent, fileName);
@@ -63,7 +113,10 @@ app.post('/api/convert', upload.single('file'), (req, res) => {
             originalFileName: fileName,
             convertedFileName: outputFileName,
             xsdContent: xsdContent,
-            conversionDate: new Date().toISOString()
+            esqlContentLength: esqlContent.length,
+            xsdContentLength: xsdContent.length,
+            conversionDate: new Date().toISOString(),
+            conversionType: 'ESQL_TO_XSD'
         });
         
     } catch (error) {
@@ -74,29 +127,43 @@ app.post('/api/convert', upload.single('file'), (req, res) => {
     }
 });
 
-// Health check endpoint
+// Health check
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'OK', service: 'ESQL to XSD Converter' });
+    res.json({ 
+        status: 'OK', 
+        service: 'ESQL to XSD Converter API',
+        version: '1.0.0',
+        nodeVersion: process.version
+    });
 });
 
-// Root endpoint with usage info
+// Root endpoint with API documentation
 app.get('/', (req, res) => {
     res.json({
         service: 'ESQL to XSD Conversion API',
+        version: '1.0.0',
+        description: 'Convert ESQL files to XSD schema format',
         endpoints: {
-            'POST /api/convert': 'Convert ESQL to XSD (file upload or raw text)',
-            'GET /api/health': 'Service health check'
+            'POST /api/convert': 'Convert ESQL to XSD',
+            'GET /api/health': 'Health check'
         },
         usage: {
-            file_upload: 'Send ESQL file as multipart/form-data with field name "file"',
-            raw_text: 'Send JSON with "content" field containing ESQL code'
+            file_upload: 'Send multipart/form-data with "file" field',
+            raw_json: 'Send JSON with "content" or "esqlContent" field',
+            raw_text: 'Send plain text ESQL content in request body'
+        },
+        examples: {
+            curl_file: 'curl -X POST -F "file=@sample.esql" https://your-api.onrender.com/api/convert',
+            curl_json: 'curl -X POST -H "Content-Type: application/json" -d \'{"content": "CREATE COMPUTE MODULE Test\\nEND MODULE;", "filename": "test.esql"}\' https://your-api.onrender.com/api/convert'
         }
     });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`ESQL to XSD Converter API running on port ${PORT}`);
+    console.log(`🚀 ESQL to XSD Converter API running on port ${PORT}`);
+    console.log(`📖 API Documentation: http://localhost:${PORT}/`);
+    console.log(`❤️  Health Check: http://localhost:${PORT}/api/health`);
 });
 
 module.exports = app;
